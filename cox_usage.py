@@ -1,60 +1,50 @@
-#!/usr/bin/python
-# cox_usage.py
-# Script designed to get Cox Communications internet usage
-#
-# Version 1.0
-# Original Author : Rick Rocklin
-# Original Date   : 10/02/2017
-#
-# 10/17/2017: Output to file
-# 11/02/2017: Updated to use mechanicalsoup
-from config import USERNAME, PASSWORD
-import mechanicalsoup
-import re
-import json
-import os
+#!/usr/bin/python3
 
-# URL that we authenticate against
-login_url = "https://www.cox.com/resaccount/sign-in.cox"
-# URL that we grab all the data from
-stats_url = "https://www.cox.com/internet/mydatausage.cox"
-# Your cox user account (e.g. username@cox.net) and password
+from config import USERNAME, PASSWORD
+import requests
+
+login_url = "https://idm.east.cox.net/idm/coxnetlogin"
+data_url = "https://www.cox.com/internet/mydatausage.cox"
+stats_url = "https://www.cox.com/internet/ajaxDataUsageJSON.ajax"
+
 cox_user = USERNAME
 cox_pass = PASSWORD
 
-# Setup browser
-browser = mechanicalsoup.StatefulBrowser(
-    soup_config={"features": "lxml"},
-    user_agent="Mozilla/5.0 (X11; U; Linux i686; en-US; rv:1.9.2.13) Gecko/20101206 Ubuntu/10.10 (maverick) Firefox/3.6.13",
+with requests.Session() as session:
+    payload = {
+        "onsuccess": "https%3A%2F%2Fwww.cox.com%2Fresimyaccount%2Fhome.html",
+        "targetFN": "COX.net",
+        "emaildomain": "@cox.net",
+        "username": USERNAME,
+        "password": PASSWORD,
+        "rememberme": "on",
+    }
+
+    headers = {
+        "Host": "www.cox.com",
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/81.0.4044.122 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
+        "Accept-Encoding": "gzip, deflate, br",
+        "DNT": "1",
+        "Connection": "keep-alive",
+        "Upgrade-Insecure-Requests": "1",
+    }
+
+    login = session.post(login_url, data=payload)
+    session.get("https://www.cox.com/internet/mydatausage.cox", headers=headers)
+    data = session.get(stats_url, headers=headers)
+
+json_dump = data.json()
+
+percentage = json_dump["modemDetails"][0]["dataUsed"]["renderPercentage"]
+current_used = int(
+    json_dump["modemDetails"][0]["dataUsed"]["totalDataUsed"].replace("&#160;GB", "")
 )
+total_plan = int(json_dump["modemDetails"][0]["dataPlan"].replace("&#160;GB", ""))
+billing_period = json_dump["modemDetails"][0]["servicePeriod"]
 
-# Open the login URL
-login_page = browser.get(login_url)
-
-# Similar to assert login_page.ok but with full status code in case of failure.
-login_page.raise_for_status()
-
-# Find the form named sign-in
-login_form = mechanicalsoup.Form(login_page.soup.select_one('form[name="sign-in"]'))
-
-# Specify username and password
-login_form.input({"username": cox_user, "password": cox_pass})
-
-# Submit the form
-browser.submit(login_form, login_page.url)
-
-# Read the stats URL
-stats_page = browser.get(stats_url)
-
-# Grab the script with the stats in it
-stats = stats_page.soup.findAll("script", string=re.compile("utag_data"))[0].string
-
-# Split and RSplit on the first { and on the last } which is where the data object is located
-jsonValue = "{%s}" % (stats.split("{", 1)[1].rsplit("}", 1)[0],)
-
-# Load into json
-data = json.loads(jsonValue)
-
-print(f"\nTotal Used: {data['dumUsage']} GB")
-print(f"Total Left: {int(data['dumLimit']) - int(data['dumUsage'])} GB")
-print(f"Days Left: {data['dumDaysLeft']}\n")
+print("\nData usage for {}".format(billing_period))
+print("Used: {} GB".format(current_used))
+print("Remaining: {} GB".format(total_plan - current_used))
+print("Percentage Used: {}%\n".format(percentage))
